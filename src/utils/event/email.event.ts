@@ -22,4 +22,22 @@ emailEvent.on("confirmEmail",async(data:Mail.Options & {otp:string})=>{
 })
 
 
+
+
+emailEvent.on("resetPassword",async(data:Mail.Options & {otp:string})=>{
+
+    try {
+        data.subject = "Rest-Account-Password";
+        data.html = verifyEmailTemplate({title:"Rest-Account-Password",otp:data.otp});
+        await sendEmail(data);
+        
+    } catch (error) {
+        console.log("Failed to send email",error);
+        
+    }
+
+
+})
+
+
 export default emailEvent;

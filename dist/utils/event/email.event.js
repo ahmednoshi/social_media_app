@@ -15,4 +15,14 @@ exports.emailEvent.on("confirmEmail", async (data) => {
         console.log("Failed to send email", error);
     }
 });
+exports.emailEvent.on("resetPassword", async (data) => {
+    try {
+        data.subject = "Rest-Account-Password";
+        data.html = (0, templete_email_1.verifyEmailTemplate)({ title: "Rest-Account-Password", otp: data.otp });
+        await (0, send_email_1.sendEmail)(data);
+    }
+    catch (error) {
+        console.log("Failed to send email", error);
+    }
+});
 exports.default = exports.emailEvent;

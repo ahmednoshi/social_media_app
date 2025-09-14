@@ -2,16 +2,21 @@ import { Request, Response } from "express";
 import { CreateUserDto, LoginUserDto } from "./user.dto";
 import { DatabaseRepositry } from "../../DB/repositry/database.repositry";
 // import {  Model } from "mongoose";
-import { IUser, UserModel } from "../../DB/models/user.model";
+import { HUserDocument, IUser, UserModel } from "../../DB/models/user.model";
 import { AppError } from "../../utils/response/app.Error";
 import { compareHash, generateHash } from './../../utils/security/hash.security';
 import emailEvent from "../../utils/event/email.event";
 import { generateOtp } from "../../utils/otp";
-import { createCredentialToken } from './../../utils/security/token.security';
+import { createCredentialToken, createRevokeToken, LogoutEnum } from './../../utils/security/token.security';
+import { UpdateQuery } from "mongoose";
+import {  TokenModel } from "../../DB/models/token.model";
+import { tokenRepositry } from "../../DB/repositry/token.repositry";
+import { JwtPayload } from "jsonwebtoken";
 
 
 class UserService {
     private userModel = new DatabaseRepositry<IUser>(UserModel);
+    private tokenModel = new tokenRepositry(TokenModel);
 
 
     signUp = async (req:Request,res:Response):Promise<Response>=>{ 
@@ -112,6 +117,151 @@ class UserService {
 
 
 
+
+
+
+    }
+
+
+    logout = async (req:Request,res:Response):Promise<Response>=>{
+        const {flag} = req.body;
+
+        const update:UpdateQuery<IUser> = {}
+        switch(flag){
+            case LogoutEnum.all:
+                update.changeCredentialTime= new Date();
+                break;
+                default:
+                    await createRevokeToken(req.decoded as JwtPayload);
+
+                    break;
+
+        }
+
+        await this.userModel.updateOne({
+            filter:{_id:req.decoded?._id},
+            update,
+        })
+
+
+        return res.status(200).json({message:"logout successfully"});
+
+
+
+
+
+    }
+
+
+    refreshToken = async (req:Request,res:Response):Promise<Response>=>{
+
+        const Credentials = await createCredentialToken(req.user as HUserDocument);
+
+        await createRevokeToken(req.decoded as JwtPayload);
+
+        return res.status(201).json({message:"refresh token successfully",data:{Credentials}});
+
+
+
+    }
+
+
+    sendForgetPasswordOtp = async (req:Request,res:Response):Promise<Response>=>{
+
+        const {email} = req.body;
+
+        const user = await this.userModel.findOne({
+            filter:{email,confirmAT:{$exists:true}}
+        });
+
+        if(!user){
+            throw new AppError("user not found",404);
+        }
+
+        const otp = generateOtp();
+
+        const result = await this.userModel.updateOne({
+            filter:{email},
+            update:{
+                resetPasswordOtp:await generateHash(String(otp))}
+        })
+
+        if(!result.modifiedCount){
+            throw new AppError("fail to send otp",400);
+        }
+
+
+
+        emailEvent.emit("resetPassword",{to:email,otp});
+
+
+
+        return res.status(200).json({message:"otp sent successfully"});
+
+
+
+    }
+
+
+    verifyForgetPasswordOtp = async (req:Request,res:Response):Promise<Response>=>{
+        const {email,otp} = req.body;
+
+
+        const user = await this.userModel.findOne({
+            filter:{email,resetPasswordOtp:{$exists:true}}
+        });
+
+
+        if(!user){
+            throw new AppError("user not found",404);
+        }
+
+
+        if(!await compareHash(otp,user.resetPasswordOtp as string)){
+            throw new AppError("invalid otp",400);
+        }
+
+        return res.status(200).json({message:"otp verified successfully"});
+
+
+
+    }
+
+
+    resetForgetPasswordOtp= async (req:Request,res:Response):Promise<Response>=>{
+
+        const {email,otp,password} = req.body;
+
+
+
+        const user = await this.userModel.findOne({
+            filter:{email,resetPasswordOtp:{$exists:true}}
+        });
+
+        if(!user){
+            throw new AppError("user not found",404);
+        }
+
+
+        if(!await compareHash(otp,user.resetPasswordOtp as string)){
+            throw new AppError("invalid otp",400);
+        }
+
+
+
+        await this.userModel.updateOne({
+            filter:{email},
+            update:{
+                password:await generateHash(password),
+                changeCredentialTime:new Date(),
+                $unset:{resetPasswordOtp:true},
+            }
+        })
+
+
+
+
+        return res.status(200).json({message:"password reset successfully"});
 
 
 

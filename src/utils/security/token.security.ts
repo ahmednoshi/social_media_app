@@ -5,6 +5,9 @@ import { JwtPayload } from './../../../node_modules/@types/jsonwebtoken/index.d'
 import { AppError } from "../response/app.Error";
 import { UserModel } from './../../DB/models/user.model';
 import { DatabaseRepositry } from "../../DB/repositry/database.repositry";
+import{v4 as uuid}from "uuid"
+import { tokenRepositry } from "../../DB/repositry/token.repositry";
+import { HTokenDocument, TokenModel } from "../../DB/models/token.model";
 
 
 export enum signatureLevelEnum {
@@ -16,6 +19,11 @@ export enum signatureLevelEnum {
 export enum tokenTypeEnum {
     access = "access",
     refresh = "refresh",
+}
+
+export enum LogoutEnum {
+    only = "only",
+    all = "all",
 }
 
 export const generateToken = async ({
@@ -91,12 +99,13 @@ export const createCredentialToken = async (user:HUserDocument)=>{
     const signatureLevel = await detectSingnatureLevel(user.role);
     const signature = await getSignature(signatureLevel);
     console.log({signature});
+    const jwtid = uuid();
     
 
         const accessToken = await generateToken({
             payload:{_id:user._id},
             secretKey:signature.access_token,
-            options:{expiresIn:Number(process.env.TOKEN_EXPIRES_IN)}
+            options:{expiresIn:Number(process.env.TOKEN_EXPIRES_IN),jwtid}
             
         });
 
@@ -105,7 +114,7 @@ export const createCredentialToken = async (user:HUserDocument)=>{
         const refreshToken = await generateToken({
             payload:{_id:user._id},
             secretKey:signature.refresh_token,
-            options:{expiresIn:Number(process.env.TOKEN_EXPIRES_IN_REFRESH)}
+            options:{expiresIn:Number(process.env.TOKEN_EXPIRES_IN_REFRESH),jwtid}
         });
 
 
@@ -121,6 +130,7 @@ export const decodeToken = async({authorization,tokenType=tokenTypeEnum.access}:
 })=>{
 
     const userModel = new DatabaseRepositry(UserModel);
+    const tokenModel = new tokenRepositry(TokenModel);
     const [bearerKey , token] = authorization.split(" ");
 
     if(!token || !bearerKey){
@@ -139,6 +149,12 @@ export const decodeToken = async({authorization,tokenType=tokenTypeEnum.access}:
         throw new AppError("invalid token",400);
     }
 
+    if(await tokenModel.findOne({filter:{jti:decoded.jti}})){
+        throw new AppError("invalid token",400);
+    }
+
+
+
 
     const user = await userModel.findOne({
         filter:{_id:decoded._id}
@@ -147,6 +163,10 @@ export const decodeToken = async({authorization,tokenType=tokenTypeEnum.access}:
 
     if(!user){
         throw new AppError("user not found",404);
+    }
+
+    if(user.changeCredentialTime?.getTime()||0 > decoded.iat*1000){
+        throw new AppError("invalid  token",400);
     }
 
 
@@ -158,5 +178,22 @@ export const decodeToken = async({authorization,tokenType=tokenTypeEnum.access}:
 
 
 
+export const createRevokeToken = async(decoded:JwtPayload):Promise<HTokenDocument>=>{
+        const tokenModel = new tokenRepositry(TokenModel);
+        const [result]= await tokenModel.create({
+                        data:[{
+                            jti:decoded?.jti as string,
+                            expiresIn:(decoded?.iat as number) + Number(process.env.TOKEN_EXPIRES_IN_REFRESH),
+                            userId:decoded?._id
 
+                        }]
+                    }) || [];
+
+                    if(!result){
+                        throw new AppError("fail to create Revoke token",400);
+                    }
+
+                    return result;
+
+}
 
